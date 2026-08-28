@@ -6,7 +6,6 @@ import { useLanguage } from '@/lib/i18n/LanguageContext'
 import {
   CheckCircle2,
   XCircle,
-  Loader2,
   Clock,
   Volume2,
   VolumeX,
@@ -21,7 +20,8 @@ import {
   Check,
   Wifi,
   WifiOff,
-  RefreshCw
+  RefreshCw,
+  AlertTriangle
 } from 'lucide-react'
 import QrCamera from '@/components/qr-camera'
 import { 
@@ -49,7 +49,7 @@ interface RecentScanItem extends ScanSuccessData {
   timeFormatted: string
 }
 
-type ScanStatus = 'idle' | 'scanning' | 'verifying' | 'success' | 'error'
+type ScanStatus = 'idle' | 'scanning' | 'success' | 'error'
 
 let sharedAudioContext: AudioContext | null = null
 
@@ -87,19 +87,19 @@ function playBeep(type: 'success' | 'error') {
     if (type === 'success') {
       osc.type = 'sine'
       osc.frequency.setValueAtTime(980, now)
-      osc.frequency.exponentialRampToValueAtTime(1800, now + 0.12)
+      osc.frequency.exponentialRampToValueAtTime(1800, now + 0.1)
       gain.gain.setValueAtTime(0.35, now)
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15)
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12)
       osc.start(now)
-      osc.stop(now + 0.15)
+      osc.stop(now + 0.12)
     } else {
       osc.type = 'square'
       osc.frequency.setValueAtTime(350, now)
       osc.frequency.setValueAtTime(200, now + 0.1)
       gain.gain.setValueAtTime(0.3, now)
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22)
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18)
       osc.start(now)
-      osc.stop(now + 0.22)
+      osc.stop(now + 0.18)
     }
   } catch {}
 }
@@ -148,7 +148,7 @@ export default function AttendanceScannerPage() {
         setUnsyncedCount(remaining.length)
       }
     } catch (err) {
-      console.warn('Sync failed, will retry when online:', err)
+      console.warn('Sync failed:', err)
     } finally {
       setIsSyncing(false)
     }
@@ -235,6 +235,7 @@ export default function AttendanceScannerPage() {
     router.push('/dashboard')
   }
 
+  // Instant QR Detection without loader or screen freeze
   const handleQrDetected = async (rawValue: string) => {
     if (busyRef.current) return
     busyRef.current = true
@@ -250,13 +251,11 @@ export default function AttendanceScannerPage() {
       token = parts[parts.length - 1]
     }
 
-    setScanStatus('verifying')
     setErrorMessage('')
-
     const nowIso = new Date().toISOString()
     const timeFmt = new Date().toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 
-    // 1. FAST PATH: Instant 0ms local lookup in IndexedDB
+    // 1. FAST PATH: Instant local lookup in IndexedDB (0ms)
     const localStudent = await findStudentLocally(token)
 
     if (localStudent) {
@@ -274,12 +273,13 @@ export default function AttendanceScannerPage() {
         isOffline: !navigator.onLine
       }
 
+      // Immediately render student profile on the left
       setStudentData(successStudent)
       setScanStatus('success')
       setTodayCount(prev => prev + 1)
       setRecentScans(prev => [{ ...successStudent, timeFormatted: timeFmt }, ...prev.slice(0, 4)])
 
-      // Save to offline queue first (always resilient)
+      // Save to offline queue
       const offlineRecord = {
         id: crypto.randomUUID(),
         token,
@@ -293,9 +293,9 @@ export default function AttendanceScannerPage() {
         checked_in_at: nowIso,
         synced: false
       }
-      await saveOfflineAttendance(offlineRecord)
+      saveOfflineAttendance(offlineRecord)
 
-      // If online, trigger background sync
+      // Background server update if online
       if (navigator.onLine) {
         fetch('/api/attendance/scan', {
           method: 'POST',
@@ -314,12 +314,12 @@ export default function AttendanceScannerPage() {
         setUnsyncedCount(prev => prev + 1)
       }
 
-      // Display student details for 2 seconds, then smoothly resume scanning
+      // Exactly 1.5 seconds display, then immediately ready for next QR
       if (timerRef.current) clearTimeout(timerRef.current)
       timerRef.current = setTimeout(() => {
         setScanStatus('scanning')
         busyRef.current = false
-      }, 2000)
+      }, 1500)
 
       return
     }
@@ -336,13 +336,15 @@ export default function AttendanceScannerPage() {
 
       if (!res.ok || !data.success) {
         if (soundEnabled) playBeep('error')
-        setErrorMessage(data.message || 'QR kod topilmadi.')
+        setErrorMessage(data.message || 'QR kod topilmadi yoki tasdiqlanmadi.')
         setScanStatus('error')
         
-        setTimeout(() => {
+        // Show error on the left for 1.5s then resume
+        if (timerRef.current) clearTimeout(timerRef.current)
+        timerRef.current = setTimeout(() => {
           setScanStatus('scanning')
           busyRef.current = false
-        }, 1800)
+        }, 1500)
         return
       }
 
@@ -364,7 +366,7 @@ export default function AttendanceScannerPage() {
       setTodayCount(prev => prev + 1)
       setRecentScans(prev => [{ ...successStudent, timeFormatted: timeFmt }, ...prev.slice(0, 4)])
 
-      // Also add to local cache for future 0ms scans
+      // Cache locally for future 0ms scans
       cacheStudentsLocally([{
         id: data.student.id,
         student_code: data.student.student_code,
@@ -374,20 +376,22 @@ export default function AttendanceScannerPage() {
         photo_url: data.student.photo_url
       }])
 
+      // 1.5s delay then ready for next
       if (timerRef.current) clearTimeout(timerRef.current)
       timerRef.current = setTimeout(() => {
         setScanStatus('scanning')
         busyRef.current = false
-      }, 2000)
+      }, 1500)
 
     } catch {
       if (soundEnabled) playBeep('error')
-      setErrorMessage('QR kod topilmadi (Offline rejimda yangi o\'quvchini tekshirib bo\'lmadi).')
+      setErrorMessage('QR kod topilmadi.')
       setScanStatus('error')
-      setTimeout(() => {
+      if (timerRef.current) clearTimeout(timerRef.current)
+      timerRef.current = setTimeout(() => {
         setScanStatus('scanning')
         busyRef.current = false
-      }, 1800)
+      }, 1500)
     }
   }
 
@@ -429,7 +433,7 @@ export default function AttendanceScannerPage() {
                 <QrCode className="w-5 h-5 text-blue-400" />
                 {t('scanner')}
               </h1>
-              <p className="text-[11px] text-slate-400 font-medium">0ms Ultra-tezkor Offline/Online QR davomat</p>
+              <p className="text-[11px] text-slate-400 font-medium">Uzluksiz 0ms tezkor QR davomat</p>
             </div>
 
             {/* Offline/Online indicator */}
@@ -486,23 +490,24 @@ export default function AttendanceScannerPage() {
         </div>
       </header>
 
-      {/* Main Grid: LEFT (Big Student Profile) + RIGHT (High-Tech Camera Viewport) */}
+      {/* Main Grid: LEFT (Big Student Profile / Status Messages) + RIGHT (Clean Always-On Camera) */}
       <main className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 p-4 md:p-8 max-w-7xl w-full mx-auto items-center relative z-10 overflow-y-auto">
         
         {/* ========================================================= */}
-        {/* LEFT COLUMN: BIG STUDENT DETAILS CARD (~55% width on LG) */}
+        {/* LEFT COLUMN: BIG STUDENT DETAILS / STATUS MESSAGES CARD    */}
         {/* ========================================================= */}
         <div className="lg:col-span-7 flex flex-col justify-center h-full min-h-[460px]">
-          {studentData && (scanStatus === 'success' || scanStatus === 'verifying') ? (
-            <div className="w-full bg-slate-900/90 backdrop-blur-2xl border-2 border-slate-800 rounded-3xl p-6 md:p-8 shadow-2xl relative overflow-hidden flex flex-col justify-between animate-in zoom-in-95 duration-200">
+          {scanStatus === 'success' && studentData ? (
+            /* SUCCESS: Instant Large Student Profile View */
+            <div className="w-full bg-slate-900/90 backdrop-blur-2xl border-2 border-slate-800 rounded-3xl p-6 md:p-8 shadow-2xl relative overflow-hidden flex flex-col justify-between animate-in zoom-in-95 duration-150">
               
-              {/* 2-second Progress Bar countdown on top */}
+              {/* 1.5-second Progress Bar countdown on top */}
               <div className="absolute top-0 inset-x-0 h-1.5 bg-slate-800 overflow-hidden">
                 <div 
-                  className={`h-full transition-all duration-[2000ms] ease-linear ${
+                  className={`h-full transition-all duration-[1500ms] ease-linear ${
                     studentData.status === 'present' ? 'bg-emerald-500' : 'bg-amber-500'
                   }`}
-                  style={{ width: scanStatus === 'success' ? '0%' : '100%' }}
+                  style={{ width: '0%' }}
                 />
               </div>
 
@@ -514,7 +519,7 @@ export default function AttendanceScannerPage() {
                     : 'bg-amber-500 text-white shadow-amber-500/30'
                 }`}>
                   <CheckCircle2 className="w-6 h-6" />
-                  <span>{studentData.status === 'present' ? '✅ KELDI' : '⏰ KECHIKDI'}</span>
+                  <span>{studentData.status === 'present' ? '✅ Tasdiqlandi: KELDI' : '⏰ Tasdiqlandi: KECHIKDI'}</span>
                   {studentData.isOffline && <span className="text-[10px] bg-black/30 px-2 py-0.5 rounded-md">Offline</span>}
                 </div>
 
@@ -560,7 +565,7 @@ export default function AttendanceScannerPage() {
 
                     <div className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm font-bold">
                       <Check className="w-4 h-4" />
-                      <span>Davomat saqlandi</span>
+                      <span>Davomat qayd etildi</span>
                     </div>
                   </div>
                 </div>
@@ -570,14 +575,38 @@ export default function AttendanceScannerPage() {
               <div className="w-full pt-4 border-t border-slate-800 flex justify-between items-center text-xs text-slate-400">
                 <span className="flex items-center gap-1.5">
                   <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                  Keyingi skanerlash 2 soniyada avtomatik faollashadi
+                  Keyingi o&apos;quvchi 1.5 soniyada qabul qilinadi
                 </span>
-                <span className="font-semibold text-emerald-400">0ms Tezlikda Qayd Etildi</span>
+                <span className="font-semibold text-emerald-400">0ms Tezkor Qayd</span>
               </div>
 
             </div>
+          ) : scanStatus === 'error' ? (
+            /* ERROR: Rejected Message Card on Left */
+            <div className="w-full bg-rose-950/40 backdrop-blur-2xl border-2 border-rose-800/80 rounded-3xl p-8 shadow-2xl flex flex-col items-center justify-center text-center min-h-[420px] relative overflow-hidden animate-in zoom-in-95 duration-150">
+              <div className="w-20 h-20 rounded-3xl bg-rose-500/20 border border-rose-500/30 flex items-center justify-center text-rose-400 mb-5 shadow-lg">
+                <XCircle className="w-10 h-10" />
+              </div>
+
+              <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-rose-500/20 text-rose-300 font-bold text-xs uppercase tracking-wider mb-3">
+                <AlertTriangle className="w-4 h-4" />
+                <span>❌ Rad etildi</span>
+              </div>
+
+              <h3 className="text-2xl md:text-3xl font-black text-white tracking-tight mb-2">
+                QR Kod Qabul Qilinmadi
+              </h3>
+              <p className="text-sm text-rose-200 max-w-md leading-relaxed mb-6">
+                {errorMessage || 'Ushbu QR kod tizimda topilmadi yoki nofaol.'}
+              </p>
+
+              <span className="text-xs text-slate-400 font-semibold flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                Kamera avtomatik yangi QR kodni kutmoqda...
+              </span>
+            </div>
           ) : (
-            /* Idle Placeholder state when no scan is active */
+            /* IDLE: Placeholder state when waiting for QR */
             <div className="w-full bg-slate-900/40 backdrop-blur-xl border-2 border-dashed border-slate-800 rounded-3xl p-8 shadow-xl flex flex-col items-center justify-center text-center min-h-[420px] relative overflow-hidden group">
               <div className="w-20 h-20 rounded-3xl bg-blue-600/10 border border-blue-500/20 flex items-center justify-center text-blue-400 mb-5 shadow-inner group-hover:scale-105 transition-transform duration-300">
                 <QrCode className="w-10 h-10 animate-pulse" />
@@ -587,17 +616,17 @@ export default function AttendanceScannerPage() {
                 O&apos;quvchi QR Kodini Ko&apos;rsating
               </h3>
               <p className="text-sm text-slate-400 max-w-md leading-relaxed mb-6">
-                Offline va Online rejimda 0ms tezlikda ishlaydi. Kameraga QR kod ko&apos;rsatilganda o&apos;quvchi ma&apos;lumotlari bir lahzada paydo bo&apos;ladi.
+                Kameraga QR kod ko&apos;rsatilishi bilan o&apos;quvchi ma&apos;lumotlari bir lahzada (0ms) paydo bo&apos;ladi va 1.5 soniyada keyingi o&apos;quvchiga o&apos;tadi.
               </p>
 
               <div className="flex flex-wrap items-center justify-center gap-3 text-xs font-semibold text-slate-400">
                 <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800/80 border border-slate-700/60">
                   <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                  Kamera tayyor
+                  Kamera doimiy faol
                 </span>
                 <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800/80 border border-slate-700/60">
                   <Sparkles className="w-3.5 h-3.5 text-blue-400" />
-                  Offline 0ms kesh yoqilgan
+                  1.5s Ultra-tezkor oraliq
                 </span>
               </div>
             </div>
@@ -634,20 +663,20 @@ export default function AttendanceScannerPage() {
         </div>
 
         {/* ========================================================= */}
-        {/* RIGHT COLUMN: HIGH-TECH QR CAMERA (~45% width on LG)     */}
+        {/* RIGHT COLUMN: CLEAN ALWAYS-ON HIGH-TECH QR CAMERA         */}
         {/* ========================================================= */}
         <div className="lg:col-span-5 flex flex-col items-center justify-center">
           <div className="w-full max-w-[420px] aspect-square relative rounded-3xl overflow-hidden border-4 border-slate-800 shadow-2xl bg-slate-950">
             
-            {/* Always-on smooth QrCamera (Never killed/frozen, only paused via prop) */}
+            {/* Always-on smooth QrCamera — NEVER STOPPED / NEVER FROZEN */}
             <QrCamera
               active={cameraOn}
-              paused={busyRef.current}
+              paused={false}
               onScan={handleQrDetected}
             />
 
             {/* Viewfinder Target & Laser Animation */}
-            {scanStatus === 'scanning' && cameraOn && (
+            {cameraOn && (
               <div className="absolute inset-0 pointer-events-none flex flex-col justify-center items-center">
                 <div className="w-60 h-60 border-2 border-blue-500/30 rounded-3xl relative">
                   {/* Glowing Laser Line */}
@@ -661,28 +690,6 @@ export default function AttendanceScannerPage() {
                   <div className="absolute -bottom-1.5 -left-1.5 w-7 h-7 border-b-4 border-l-4 border-blue-500 rounded-bl-2xl shadow-[0_0_10px_#3b82f6]" />
                   <div className="absolute -bottom-1.5 -right-1.5 w-7 h-7 border-b-4 border-r-4 border-blue-500 rounded-br-2xl shadow-[0_0_10px_#3b82f6]" />
                 </div>
-              </div>
-            )}
-
-            {/* Overlay: Fast 1-2s Verification Loader */}
-            {scanStatus === 'verifying' && (
-              <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-md flex flex-col items-center justify-center gap-3 z-30 animate-in fade-in duration-100">
-                <div className="relative">
-                  <div className="w-16 h-16 rounded-full border-4 border-blue-500/20 border-t-blue-500 animate-spin" />
-                  <QrCode className="w-6 h-6 text-blue-400 absolute inset-0 m-auto animate-pulse" />
-                </div>
-                <span className="font-bold text-sm text-white tracking-wide">O&apos;quvchi tekshirilmoqda...</span>
-              </div>
-            )}
-
-            {/* Overlay: Error Notice */}
-            {scanStatus === 'error' && (
-              <div className="absolute inset-0 bg-rose-950/90 backdrop-blur-md flex flex-col items-center justify-center gap-3 z-30 text-white p-6 text-center animate-in zoom-in-95 duration-150">
-                <div className="w-14 h-14 rounded-2xl bg-rose-500/20 border border-rose-500/30 flex items-center justify-center text-rose-400 shadow-lg">
-                  <XCircle className="w-8 h-8" />
-                </div>
-                <h4 className="text-lg font-black tracking-tight">Qabul qilinmadi</h4>
-                <p className="text-xs text-rose-200 font-medium max-w-xs leading-relaxed">{errorMessage}</p>
               </div>
             )}
 

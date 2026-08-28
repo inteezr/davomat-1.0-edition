@@ -72,8 +72,8 @@ export default function QrCamera({ active, paused = false, onDetect, onScan }: Q
           if (!text) return
 
           const now = Date.now()
-          // Prevent duplicate triggers within 2 seconds for the exact same code
-          if (text === lastScanned.current.code && now - lastScanned.current.time < 2000) {
+          // Prevent duplicate triggers within 1.5 seconds for the exact same code
+          if (text === lastScanned.current.code && now - lastScanned.current.time < 1500) {
             return
           }
 
