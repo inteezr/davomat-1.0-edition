@@ -71,6 +71,9 @@ export async function GET(request: NextRequest) {
  * Creates a new student, automatically generates their Auth credentials.
  */
 export async function POST(request: NextRequest) {
+  const serviceClient = createServiceClient()
+  let createdAuthUserId: string | null = null
+
   try {
     const admin = await verifyAdmin()
     const body = await request.json()
@@ -89,8 +92,6 @@ export async function POST(request: NextRequest) {
       return Response.json({ error: 'Student ID, ism va familiya majburiy.' }, { status: 400 })
     }
 
-    const serviceClient = createServiceClient()
-
     // 1. Check if student_code already exists
     const { data: existing } = await serviceClient
       .from('students')
@@ -104,23 +105,39 @@ export async function POST(request: NextRequest) {
 
     // 2. Generate random password and internal email
     const password = generateRandomPassword()
-    const email = `${student_code.toLowerCase().trim()}@students.internal`
+    const email = `${student_code.toLowerCase().trim()}@davomat.school`
 
-    // 3. Create Auth user via official Supabase Admin API
-    const { data: authUser } = await serviceClient.auth.admin.createUser({
-      email,
+    // 3. Check if email already taken in auth
+    const { data: existingAuth } = await serviceClient.auth.admin.listUsers()
+    const emailTaken = existingAuth?.users?.find(u => u.email === email)
+    
+    const finalEmail = emailTaken
+      ? `${student_code.toLowerCase().trim()}_${Date.now()}@davomat.school`
+      : email
+
+    // 4. Create Auth user — MUST succeed before DB insert (FK constraint)
+    const { data: authData, error: authError } = await serviceClient.auth.admin.createUser({
+      email: finalEmail,
       password,
       email_confirm: true,
-      user_metadata: { full_name: `${first_name} ${last_name}` }
+      user_metadata: { full_name: `${first_name.trim()} ${last_name.trim()}` }
     })
 
-    const userId = authUser?.user?.id || crypto.randomUUID()
+    if (authError || !authData?.user?.id) {
+      console.error('Auth user create error:', authError)
+      return Response.json(
+        { error: `Foydalanuvchi yaratishda xatolik: ${authError?.message || 'Noma\'lum xato'}` },
+        { status: 500 }
+      )
+    }
 
-    // 4. Create student profile in public.students
+    createdAuthUserId = authData.user.id
+
+    // 5. Create student profile in public.students
     const { data: student, error: studentError } = await serviceClient
       .from('students')
       .insert({
-        id: userId,
+        id: createdAuthUserId,
         school_id: admin.school_id,
         student_code: student_code.trim(),
         first_name: first_name.trim(),
@@ -130,27 +147,22 @@ export async function POST(request: NextRequest) {
         parent_phone: parent_phone || null,
         status: status || 'active',
         temp_password: password,
-        auth_user_id: userId,
+        auth_user_id: createdAuthUserId,
       })
       .select()
       .single()
 
     if (studentError) {
+      // Rollback: delete the created auth user to avoid orphan accounts
+      console.error('Student DB insert error:', studentError)
+      await serviceClient.auth.admin.deleteUser(createdAuthUserId).catch(() => {})
+      createdAuthUserId = null
       throw studentError
     }
 
     return Response.json({
       message: 'O\'quvchi muvaffaqiyatli yaratildi.',
-      student: student || {
-        id: userId,
-        student_code,
-        first_name,
-        last_name,
-        class_id,
-        phone,
-        parent_phone,
-        status
-      },
+      student,
       credentials: {
         login: student_code,
         password: password
@@ -158,6 +170,10 @@ export async function POST(request: NextRequest) {
     }, { status: 201 })
 
   } catch (error) {
+    // Safety rollback if anything went wrong after auth user was created
+    if (createdAuthUserId) {
+      await serviceClient.auth.admin.deleteUser(createdAuthUserId).catch(() => {})
+    }
     return handleApiError(error)
   }
 }
