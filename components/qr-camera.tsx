@@ -1,42 +1,39 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
-import { Camera, AlertCircle, RefreshCw, Upload, Image as ImageIcon, CheckCircle2 } from 'lucide-react'
+import { useEffect, useRef, useState, useCallback } from 'react'
+import { Camera, AlertCircle, RefreshCw, Upload, SwitchCamera } from 'lucide-react'
 
 type QrCameraProps = {
   active: boolean
+  paused?: boolean
   onDetect?: (text: string) => void
   onScan?: (text: string) => void
 }
 
-function emitOnce(
-  lastValue: { current: string },
-  lastAt: { current: number },
-  text: string,
-  onDetect: (text: string) => void,
-) {
-  const value = text.trim()
-  if (!value) return
-  const now = Date.now()
-  if (value === lastValue.current && now - lastAt.current < 2000) return
-  lastValue.current = value
-  lastAt.current = now
-  onDetect(value)
-}
-
-export default function QrCamera({ active, onDetect, onScan }: QrCameraProps) {
+export default function QrCamera({ active, paused = false, onDetect, onScan }: QrCameraProps) {
   const handleDetect = onDetect || onScan || (() => {})
   const containerRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const onDetectRef = useRef(handleDetect)
-  const lastValue = useRef('')
-  const lastAt = useRef(0)
+  const pausedRef = useRef(paused)
+  const lastScanned = useRef<{ code: string; time: number }>({ code: '', time: 0 })
+  
   const [cameraError, setCameraError] = useState<string | null>(null)
   const [noCameraFound, setNoCameraFound] = useState(false)
   const [isInitializing, setIsInitializing] = useState(true)
   const [fileScanLoading, setFileScanLoading] = useState(false)
+  const [availableCameras, setAvailableCameras] = useState<Array<{ id: string; label: string }>>([])
+  const [selectedCameraId, setSelectedCameraId] = useState<string | null>(null)
 
   onDetectRef.current = handleDetect
+  pausedRef.current = paused
+
+  const switchCamera = useCallback(async () => {
+    if (availableCameras.length < 2) return
+    const currentIndex = availableCameras.findIndex(c => c.id === selectedCameraId)
+    const nextIndex = (currentIndex + 1) % availableCameras.length
+    setSelectedCameraId(availableCameras[nextIndex].id)
+  }, [availableCameras, selectedCameraId])
 
   useEffect(() => {
     if (!active) {
@@ -55,7 +52,6 @@ export default function QrCamera({ active, onDetect, onScan }: QrCameraProps) {
 
       try {
         const { Html5Qrcode } = await import('html5-qrcode')
-
         if (!isMounted) return
 
         const el = document.getElementById(readerElementId)
@@ -70,40 +66,59 @@ export default function QrCamera({ active, onDetect, onScan }: QrCameraProps) {
 
         const qrCodeSuccessCallback = (decodedText: string) => {
           if (!isMounted) return
-          emitOnce(lastValue, lastAt, decodedText, (val) => onDetectRef.current(val))
+          if (pausedRef.current) return
+
+          const text = decodedText.trim()
+          if (!text) return
+
+          const now = Date.now()
+          // Prevent duplicate triggers within 2 seconds for the exact same code
+          if (text === lastScanned.current.code && now - lastScanned.current.time < 2000) {
+            return
+          }
+
+          lastScanned.current = { code: text, time: now }
+          onDetectRef.current(text)
         }
 
         const qrCodeErrorCallback = () => {
-          // Frame skip
+          // Fast frame skip - normal during scanning
         }
 
         const config = {
-          fps: 15,
+          fps: 25, // High FPS for instant snappy detection
           qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
             const minDim = Math.min(viewfinderWidth, viewfinderHeight)
             return {
-              width: Math.floor(minDim * 0.75),
-              height: Math.floor(minDim * 0.75)
+              width: Math.floor(minDim * 0.8),
+              height: Math.floor(minDim * 0.8)
             }
           },
           aspectRatio: 1.0,
         }
 
-        // Check for available cameras first
         let cameras: Array<{ id: string; label: string }> = []
         try {
           cameras = await Html5Qrcode.getCameras()
+          if (isMounted && cameras && cameras.length > 0) {
+            setAvailableCameras(cameras)
+          }
         } catch {
           // Ignored
         }
 
         if (cameras && cameras.length > 0) {
-          // Use back camera if available, otherwise first available camera
-          const backCamera = cameras.find(c => c.label.toLowerCase().includes('back') || c.label.toLowerCase().includes('orqa') || c.label.toLowerCase().includes('rear'))
-          const selectedId = backCamera ? backCamera.id : cameras[0].id
+          const backCamera = cameras.find(c =>
+            c.label.toLowerCase().includes('back') ||
+            c.label.toLowerCase().includes('orqa') ||
+            c.label.toLowerCase().includes('rear') ||
+            c.label.toLowerCase().includes('environment')
+          )
+          const targetId = selectedCameraId || (backCamera ? backCamera.id : cameras[0].id)
+          if (!selectedCameraId) setSelectedCameraId(targetId)
 
           await html5QrCode.start(
-            selectedId,
+            targetId,
             config,
             qrCodeSuccessCallback,
             qrCodeErrorCallback
@@ -112,10 +127,10 @@ export default function QrCamera({ active, onDetect, onScan }: QrCameraProps) {
           return
         }
 
-        // Try direct generic camera access (works on standard laptops)
+        // Direct generic camera access
         try {
           await html5QrCode.start(
-            { facingMode: 'user' },
+            { facingMode: 'environment' },
             config,
             qrCodeSuccessCallback,
             qrCodeErrorCallback
@@ -123,9 +138,8 @@ export default function QrCamera({ active, onDetect, onScan }: QrCameraProps) {
           if (isMounted) setIsInitializing(false)
           return
         } catch {
-          // Fallback to environment
           await html5QrCode.start(
-            { facingMode: 'environment' },
+            { facingMode: 'user' },
             config,
             qrCodeSuccessCallback,
             qrCodeErrorCallback
@@ -135,16 +149,16 @@ export default function QrCamera({ active, onDetect, onScan }: QrCameraProps) {
         }
 
       } catch (err: any) {
-        console.warn('Camera initialization error:', err)
+        console.warn('Camera init error:', err)
         if (isMounted) {
           setIsInitializing(false)
           if (err.name === 'NotAllowedError' || err.message?.includes('Permission')) {
-            setCameraError('Kameradan foydalanishga ruxsat berilmadi. Iltimos brauzeringiz manzili yonidagi qulf (ruxsat) belgisini bosib kameraga ruxsat bering.')
+            setCameraError('Kameraga ruxsat berilmadi. Iltimos brauzeringizda kameraga ruxsat bering.')
           } else if (err.name === 'NotFoundError' || err.message?.includes('Requested device not found') || err.message?.includes('topilmadi')) {
             setNoCameraFound(true)
-            setCameraError('Ushbu qurilmada faol kamera topilmadi yoki kamera boshqa dastur tomonidan band.')
+            setCameraError('Qurilmada kamera topilmadi yoki boshqa dastur tomonidan band.')
           } else {
-            setCameraError('Kamerani ishga tushirib bo\'lmadi. Qurilmangizda kamera borligini va ruxsat berilganligini tekshiring.')
+            setCameraError('Kamerani ishga tushirib bo\'lmadi. Qurilmangizda kamera borligini tekshiring.')
           }
         }
       }
@@ -158,9 +172,7 @@ export default function QrCamera({ active, onDetect, onScan }: QrCameraProps) {
         try {
           if (html5QrCode.isScanning) {
             html5QrCode.stop().then(() => {
-              try {
-                html5QrCode.clear()
-              } catch {}
+              try { html5QrCode.clear() } catch {}
             }).catch(() => {})
           } else {
             html5QrCode.clear()
@@ -170,9 +182,8 @@ export default function QrCamera({ active, onDetect, onScan }: QrCameraProps) {
         }
       }
     }
-  }, [active])
+  }, [active, selectedCameraId])
 
-  // Handle scanning an image file as QR code (fallback when no physical webcam is plugged in)
   const handleFileScan = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -183,7 +194,7 @@ export default function QrCamera({ active, onDetect, onScan }: QrCameraProps) {
       const scanner = new Html5Qrcode('qr-file-scanner-temp')
       const result = await scanner.scanFile(file, true)
       if (result) {
-        emitOnce(lastValue, lastAt, result, (val) => onDetectRef.current(val))
+        onDetectRef.current(result.trim())
       }
     } catch (err) {
       alert('Rasmdan QR kodni aniqlab bo\'lmadi. Iltimos aniqroq rasm tanlang.')
@@ -203,6 +214,25 @@ export default function QrCamera({ active, onDetect, onScan }: QrCameraProps) {
         id="qr-reader-viewport" 
         className="w-full h-full [&_video]:w-full [&_video]:h-full [&_video]:object-cover [&_img]:hidden [&_#qr-shaded-region]:hidden" 
       />
+
+      {/* Switch camera button if multiple cameras available */}
+      {availableCameras.length > 1 && !cameraError && (
+        <button
+          onClick={switchCamera}
+          className="absolute top-4 right-4 z-20 p-2.5 rounded-2xl bg-black/60 hover:bg-black/80 text-white backdrop-blur-md border border-white/10 shadow-lg transition-all active:scale-95 cursor-pointer"
+          title="Kamerani almashtirish"
+        >
+          <SwitchCamera className="w-5 h-5" />
+        </button>
+      )}
+
+      {/* Initializing Spinner */}
+      {isInitializing && (
+        <div className="absolute inset-0 bg-slate-950 flex flex-col items-center justify-center gap-3 z-10 text-white">
+          <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+          <span className="text-xs font-semibold text-slate-400">Kamera ishga tushmoqda...</span>
+        </div>
+      )}
 
       {/* Error or No Camera display */}
       {cameraError && (
