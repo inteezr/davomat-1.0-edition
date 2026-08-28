@@ -1,11 +1,9 @@
 import postgres from 'postgres'
 
-// Database connection parameters
-const connectionString = process.env.DATABASE_URL
-
-if (!connectionString) {
-  throw new Error('DATABASE_URL is not set in environment variables')
-}
+// Database connection parameters with default pooler fallback
+const connectionString =
+  process.env.DATABASE_URL ||
+  'postgresql://postgres.ugdvzdzqjvsxawtvkkzt:Sher121232%40@aws-0-eu-central-1.pooler.supabase.com:6543/postgres'
 
 // Single database client instance (hot-reload friendly in development)
 const globalForDb = global as unknown as { sql: postgres.Sql | undefined }
@@ -22,4 +20,3 @@ export const sql = globalForDb.sql || postgres(connectionString, {
 if (process.env.NODE_ENV !== 'production') {
   globalForDb.sql = sql
 }
-
