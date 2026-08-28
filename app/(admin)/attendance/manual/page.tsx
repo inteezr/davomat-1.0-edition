@@ -13,6 +13,7 @@ import {
   Loader2,
   FileSpreadsheet
 } from 'lucide-react'
+import { fastFetch, invalidateClientCache } from '@/lib/client-cache'
 
 interface Student {
   id: string
@@ -53,9 +54,8 @@ export default function ManualAttendancePage() {
   useEffect(() => {
     const fetchClasses = async () => {
       try {
-        const res = await fetch('/api/classes')
-        const data = await res.json()
-        if (data.data && data.data.length > 0) {
+        const data = await fastFetch('/api/classes')
+        if (data && data.data && data.data.length > 0) {
           setClasses(data.data)
           setSelectedClassId(data.data[0].id)
         }
@@ -74,16 +74,14 @@ export default function ManualAttendancePage() {
       setLoading(true)
       setMessage(null)
       try {
-        // 1. Fetch class students
-        const resStudents = await fetch(`/api/students?class_id=${selectedClassId}&limit=1000`)
-        const dataStudents = await resStudents.json()
-        const studentsList = dataStudents.data || []
+        // 1. Fetch class students (fastFetch)
+        const dataStudents = await fastFetch(`/api/students?class_id=${selectedClassId}&limit=1000`)
+        const studentsList = dataStudents?.data || []
         setStudents(studentsList)
 
         // 2. Fetch existing attendance for this class and date
-        const resAttendance = await fetch(`/api/attendance/history?class_id=${selectedClassId}&date=${selectedDate}&limit=1000`)
-        const dataAttendance = await resAttendance.json()
-        const attendanceList = dataAttendance.data || []
+        const dataAttendance = await fastFetch(`/api/attendance/history?class_id=${selectedClassId}&date=${selectedDate}&limit=1000`)
+        const attendanceList = dataAttendance?.data || []
 
         // 3. Merge attendance states
         const initialAttendance: AttendanceState = {}
@@ -126,6 +124,11 @@ export default function ManualAttendancePage() {
   }
 
   const handleSave = async () => {
+    if (students.length === 0) {
+      setMessage({ type: 'error', text: 'Ushbu sinfda o\'quvchilar mavjud emas.' })
+      return
+    }
+
     setSaveLoading(true)
     setMessage(null)
 
@@ -150,6 +153,7 @@ export default function ManualAttendancePage() {
         return
       }
 
+      invalidateClientCache('/api/attendance')
       setMessage({ type: 'success', text: 'Davomat muvaffaqiyatli saqlandi!' })
       // Smooth clear message
       setTimeout(() => setMessage(null), 3000)

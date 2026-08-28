@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { verifyAdmin, handleApiError } from '@/lib/auth-helpers'
 import { createServiceClient } from '@/lib/supabase/server'
+import { clearStatsCache } from '@/lib/stats-cache'
 
 /**
  * POST /api/attendance/manual
@@ -32,48 +33,60 @@ export async function POST(request: NextRequest) {
 
     const serviceClient = createServiceClient()
 
-    // 1. Bulk verify all students in a single Supabase query
+    // 1. Bulk fetch students in a single query
     const { data: students, error: studentError } = await serviceClient
       .from('students')
       .select('id, class_id')
       .eq('school_id', admin.school_id)
       .in('id', Array.from(new Set(studentIds)))
 
-    if (studentError || !students || students.length !== new Set(studentIds).size) {
-      throw new Error('STUDENT_NOT_FOUND_OR_UNAUTHORIZED')
+    if (studentError) {
+      throw studentError
     }
 
     const studentMap = new Map<string, { id: string; class_id: string | null }>()
-    for (const s of students) {
+    for (const s of (students || [])) {
       studentMap.set(s.id, s)
     }
 
     // 2. Prepare bulk rows for single upsert
     const nowIso = new Date().toISOString()
-    const rowsToUpsert = items.map((item) => {
-      const student = studentMap.get(item.student_id)!
-      const isPresentOrLate = item.status === 'present' || item.status === 'late'
-      return {
-        student_id: item.student_id,
-        class_id: student.class_id,
-        date: item.date,
-        status: item.status,
-        checked_in_at: isPresentOrLate ? nowIso : null,
-        method: 'manual',
-        recorded_by: admin.id,
-      }
-    })
+    const rowsToUpsert = items
+      .filter(item => studentMap.has(item.student_id))
+      .map((item) => {
+        const student = studentMap.get(item.student_id)!
+        const isPresentOrLate = item.status === 'present' || item.status === 'late'
+        return {
+          student_id: item.student_id,
+          class_id: student.class_id,
+          date: item.date,
+          status: item.status,
+          checked_in_at: isPresentOrLate ? nowIso : null,
+          method: 'manual',
+          recorded_by: admin.id,
+        }
+      })
 
-    const { data: results, error: upsertError } = await serviceClient
-      .from('attendance')
-      .upsert(rowsToUpsert, { onConflict: 'student_id,date' })
-      .select('id, status')
+    if (rowsToUpsert.length > 0) {
+      const { data: results, error: upsertError } = await serviceClient
+        .from('attendance')
+        .upsert(rowsToUpsert, { onConflict: 'student_id,date' })
+        .select('id, status')
 
-    if (upsertError) throw upsertError
+      if (upsertError) throw upsertError
+
+      // Clear memory cache so dashboard reflects updates immediately
+      clearStatsCache()
+
+      return Response.json({
+        message: 'Davomat muvaffaqiyatli saqlandi.',
+        count: results?.length || rowsToUpsert.length
+      })
+    }
 
     return Response.json({
-      message: 'Davomat muvaffaqiyatli saqlandi.',
-      data: results || []
+      message: 'Hech qanday o\'quvchi yangilanmadi.',
+      count: 0
     })
 
   } catch (error) {
@@ -83,9 +96,6 @@ export async function POST(request: NextRequest) {
     }
     if (msg === 'INVALID_STATUS') {
       return Response.json({ error: 'Noto\'g\'ri status yuborildi.' }, { status: 400 })
-    }
-    if (msg === 'STUDENT_NOT_FOUND_OR_UNAUTHORIZED') {
-      return Response.json({ error: 'O\'quvchi topilmadi yoki sizda ruxsat yo\'q.' }, { status: 404 })
     }
     return handleApiError(error)
   }
