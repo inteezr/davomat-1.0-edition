@@ -1,16 +1,23 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { Camera, AlertCircle, RefreshCw, Upload, SwitchCamera } from 'lucide-react'
+import { Camera, AlertCircle, RefreshCw, Upload, SwitchCamera, FlipHorizontal } from 'lucide-react'
 
 type QrCameraProps = {
   active: boolean
   paused?: boolean
+  mirror?: boolean
   onDetect?: (text: string) => void
   onScan?: (text: string) => void
 }
 
-export default function QrCamera({ active, paused = false, onDetect, onScan }: QrCameraProps) {
+export default function QrCamera({ 
+  active, 
+  paused = false, 
+  mirror = true, 
+  onDetect, 
+  onScan 
+}: QrCameraProps) {
   const handleDetect = onDetect || onScan || (() => {})
   const containerRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -24,6 +31,7 @@ export default function QrCamera({ active, paused = false, onDetect, onScan }: Q
   const [fileScanLoading, setFileScanLoading] = useState(false)
   const [availableCameras, setAvailableCameras] = useState<Array<{ id: string; label: string }>>([])
   const [selectedCameraId, setSelectedCameraId] = useState<string | null>(null)
+  const [isMirrored, setIsMirrored] = useState(mirror)
 
   onDetectRef.current = handleDetect
   pausedRef.current = paused
@@ -34,6 +42,10 @@ export default function QrCamera({ active, paused = false, onDetect, onScan }: Q
     const nextIndex = (currentIndex + 1) % availableCameras.length
     setSelectedCameraId(availableCameras[nextIndex].id)
   }, [availableCameras, selectedCameraId])
+
+  const toggleMirror = useCallback(() => {
+    setIsMirrored(prev => !prev)
+  }, [])
 
   useEffect(() => {
     if (!active) {
@@ -209,21 +221,41 @@ export default function QrCamera({ active, paused = false, onDetect, onScan }: Q
       {/* Hidden container for file-based scanner */}
       <div id="qr-file-scanner-temp" className="hidden" />
 
-      {/* Viewport element for html5-qrcode video */}
+      {/* Viewport element for html5-qrcode video (with optional horizontal mirror flip) */}
       <div 
         id="qr-reader-viewport" 
-        className="w-full h-full [&_video]:w-full [&_video]:h-full [&_video]:object-cover [&_img]:hidden [&_#qr-shaded-region]:hidden" 
+        className={`w-full h-full [&_video]:w-full [&_video]:h-full [&_video]:object-cover [&_img]:hidden [&_#qr-shaded-region]:hidden ${
+          isMirrored ? '[&_video]:-scale-x-100' : '[&_video]:scale-x-100'
+        }`} 
       />
 
-      {/* Switch camera button if multiple cameras available */}
-      {availableCameras.length > 1 && !cameraError && (
-        <button
-          onClick={switchCamera}
-          className="absolute top-4 right-4 z-20 p-2.5 rounded-2xl bg-black/60 hover:bg-black/80 text-white backdrop-blur-md border border-white/10 shadow-lg transition-all active:scale-95 cursor-pointer"
-          title="Kamerani almashtirish"
-        >
-          <SwitchCamera className="w-5 h-5" />
-        </button>
+      {/* Camera Control Overlay (Flip Mirror + Switch Camera) */}
+      {!cameraError && (
+        <div className="absolute top-4 right-4 z-20 flex items-center gap-2">
+          {/* Flip / Reverse mirror button */}
+          <button
+            onClick={toggleMirror}
+            className={`p-2.5 rounded-2xl backdrop-blur-md border border-white/10 shadow-lg transition-all active:scale-95 cursor-pointer ${
+              isMirrored 
+                ? 'bg-blue-600/80 hover:bg-blue-600 text-white' 
+                : 'bg-black/60 hover:bg-black/80 text-slate-300'
+            }`}
+            title={isMirrored ? "Oynani o'chirish (asl holat)" : "Oynani yoqish (o'ngdan chapga aylantirish)"}
+          >
+            <FlipHorizontal className="w-5 h-5" />
+          </button>
+
+          {/* Switch camera button if multiple cameras available */}
+          {availableCameras.length > 1 && (
+            <button
+              onClick={switchCamera}
+              className="p-2.5 rounded-2xl bg-black/60 hover:bg-black/80 text-white backdrop-blur-md border border-white/10 shadow-lg transition-all active:scale-95 cursor-pointer"
+              title="Kamerani almashtirish"
+            >
+              <SwitchCamera className="w-5 h-5" />
+            </button>
+          )}
+        </div>
       )}
 
       {/* Initializing Spinner */}
