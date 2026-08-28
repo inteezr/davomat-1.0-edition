@@ -7,6 +7,7 @@ import { createPortal } from 'react-dom'
 import { createClient } from '@/lib/supabase/client'
 import { LanguageProvider, useLanguage } from '@/lib/i18n/LanguageContext'
 import { Language } from '@/lib/i18n/translations'
+import { OfflineSyncProvider } from '@/components/offline-sync-provider'
 import { 
   LayoutDashboard, 
   Users, 
@@ -331,7 +332,9 @@ function AdminLayoutContent({ children }: { children: React.ReactNode }) {
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   return (
     <LanguageProvider>
-      <AdminLayoutContent>{children}</AdminLayoutContent>
+      <OfflineSyncProvider>
+        <AdminLayoutContent>{children}</AdminLayoutContent>
+      </OfflineSyncProvider>
     </LanguageProvider>
   )
 }

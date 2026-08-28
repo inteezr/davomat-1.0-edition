@@ -1,7 +1,7 @@
 /**
- * Offline Database Manager using IndexedDB
- * Allows 100% offline QR scanning with instant 0ms local lookups
- * and background auto-sync when internet reconnects.
+ * Global Offline-First Database Manager using IndexedDB
+ * Provides 0ms instant UI responses for all pages (Dashboard, Students, Classes, Attendance, Scanner)
+ * and seamless background synchronization when online.
  */
 
 export interface CachedStudent {
@@ -9,9 +9,20 @@ export interface CachedStudent {
   student_code: string
   first_name: string
   last_name: string
+  class_id?: string | null
   class_name: string | null
   photo_url: string | null
+  phone?: string | null
+  parent_phone?: string | null
+  status?: 'active' | 'inactive'
   school_id?: string
+}
+
+export interface CachedClass {
+  id: string
+  name: string
+  grade?: number | null
+  student_count?: number
 }
 
 export interface OfflineAttendanceRecord {
@@ -23,15 +34,26 @@ export interface OfflineAttendanceRecord {
   last_name: string
   class_name: string | null
   photo_url: string | null
-  status: 'present' | 'late'
+  status: 'present' | 'late' | 'excused' | 'absent'
   checked_in_at: string
   synced: boolean
 }
 
-const DB_NAME = 'davomat_offline_db'
-const DB_VERSION = 1
+export interface OfflineMutationTask {
+  id: string
+  type: 'attendance_scan' | 'attendance_manual' | 'attendance_excuse' | 'student_create' | 'student_update'
+  payload: any
+  createdAt: number
+  synced: boolean
+}
+
+const DB_NAME = 'davomat_platform_offline_db'
+const DB_VERSION = 2
 const STORE_STUDENTS = 'students'
-const STORE_QUEUE = 'attendance_queue'
+const STORE_CLASSES = 'classes'
+const STORE_ATTENDANCE = 'attendance_records'
+const STORE_STATS = 'dashboard_stats'
+const STORE_QUEUE = 'sync_queue'
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -46,13 +68,29 @@ function openDatabase(): Promise<IDBDatabase> {
       const db = (event.target as IDBOpenDBRequest).result
 
       if (!db.objectStoreNames.contains(STORE_STUDENTS)) {
-        const studentStore = db.createObjectStore(STORE_STUDENTS, { keyPath: 'student_code' })
-        studentStore.createIndex('id', 'id', { unique: false })
+        const studentStore = db.createObjectStore(STORE_STUDENTS, { keyPath: 'id' })
+        studentStore.createIndex('student_code', 'student_code', { unique: false })
+        studentStore.createIndex('class_id', 'class_id', { unique: false })
+      }
+
+      if (!db.objectStoreNames.contains(STORE_CLASSES)) {
+        db.createObjectStore(STORE_CLASSES, { keyPath: 'id' })
+      }
+
+      if (!db.objectStoreNames.contains(STORE_ATTENDANCE)) {
+        const attStore = db.createObjectStore(STORE_ATTENDANCE, { keyPath: 'id' })
+        attStore.createIndex('student_id', 'student_id', { unique: false })
+        attStore.createIndex('date', 'date', { unique: false })
+      }
+
+      if (!db.objectStoreNames.contains(STORE_STATS)) {
+        db.createObjectStore(STORE_STATS, { keyPath: 'key' })
       }
 
       if (!db.objectStoreNames.contains(STORE_QUEUE)) {
         const queueStore = db.createObjectStore(STORE_QUEUE, { keyPath: 'id' })
         queueStore.createIndex('synced', 'synced', { unique: false })
+        queueStore.createIndex('type', 'type', { unique: false })
       }
     }
 
@@ -61,9 +99,10 @@ function openDatabase(): Promise<IDBDatabase> {
   })
 }
 
-/**
- * Cache all school students locally for offline scanning
- */
+/* ============================================================
+   1. STUDENTS LOCAL CACHE (0ms lookups)
+   ============================================================ */
+
 export async function cacheStudentsLocally(students: CachedStudent[]): Promise<void> {
   try {
     const db = await openDatabase()
@@ -71,10 +110,10 @@ export async function cacheStudentsLocally(students: CachedStudent[]): Promise<v
     const store = tx.objectStore(STORE_STUDENTS)
 
     for (const student of students) {
-      if (student.student_code) {
+      if (student.id) {
         store.put({
           ...student,
-          student_code: student.student_code.trim().toUpperCase()
+          student_code: (student.student_code || '').trim().toUpperCase()
         })
       }
     }
@@ -88,14 +127,38 @@ export async function cacheStudentsLocally(students: CachedStudent[]): Promise<v
   }
 }
 
-/**
- * Instant 0ms local lookup for a student by QR code / token
- */
+export async function getLocalStudents(classId?: string): Promise<CachedStudent[]> {
+  try {
+    const db = await openDatabase()
+    const tx = db.transaction(STORE_STUDENTS, 'readonly')
+    const store = tx.objectStore(STORE_STUDENTS)
+
+    return new Promise((resolve) => {
+      const results: CachedStudent[] = []
+      const req = store.openCursor()
+      req.onsuccess = () => {
+        const cursor = req.result
+        if (cursor) {
+          const val = cursor.value as CachedStudent
+          if (!classId || val.class_id === classId) {
+            results.push(val)
+          }
+          cursor.continue()
+        } else {
+          resolve(results)
+        }
+      }
+      req.onerror = () => resolve([])
+    })
+  } catch {
+    return []
+  }
+}
+
 export async function findStudentLocally(codeOrToken: string): Promise<CachedStudent | null> {
   try {
     let cleanCode = codeOrToken.trim()
 
-    // Handle token format like /api/qr/verify?token=XYZ or direct token
     if (cleanCode.includes('token=')) {
       const match = cleanCode.match(/token=([a-zA-Z0-9_\-\.]+)/)
       if (match) cleanCode = match[1]
@@ -104,10 +167,8 @@ export async function findStudentLocally(codeOrToken: string): Promise<CachedStu
       cleanCode = parts[parts.length - 1]
     }
 
-    // Try decoding base64 json token if formatted
     try {
       if (cleanCode.includes('.')) {
-        // JWT format - decode payload
         const parts = cleanCode.split('.')
         if (parts.length >= 2) {
           const payload = JSON.parse(atob(parts[1]))
@@ -121,50 +182,118 @@ export async function findStudentLocally(codeOrToken: string): Promise<CachedStu
     const tx = db.transaction(STORE_STUDENTS, 'readonly')
     const store = tx.objectStore(STORE_STUDENTS)
 
-    // 1. Try exact student_code lookup
     const upper = cleanCode.toUpperCase()
-    const req1 = store.get(upper)
 
-    const result = await new Promise<CachedStudent | null>((resolve) => {
-      req1.onsuccess = () => {
-        if (req1.result) {
-          resolve(req1.result)
-        } else {
-          // 2. Scan all if not direct key
-          const cursorReq = store.openCursor()
-          cursorReq.onsuccess = () => {
-            const cursor = cursorReq.result
-            if (cursor) {
-              const val = cursor.value as CachedStudent
-              if (
-                val.student_code.toUpperCase() === upper ||
-                val.id === cleanCode ||
-                upper.includes(val.student_code.toUpperCase())
-              ) {
-                resolve(val)
-                return
-              }
-              cursor.continue()
-            } else {
-              resolve(null)
-            }
+    return new Promise<CachedStudent | null>((resolve) => {
+      const cursorReq = store.openCursor()
+      cursorReq.onsuccess = () => {
+        const cursor = cursorReq.result
+        if (cursor) {
+          const val = cursor.value as CachedStudent
+          if (
+            (val.student_code && val.student_code.toUpperCase() === upper) ||
+            val.id === cleanCode ||
+            (val.student_code && upper.includes(val.student_code.toUpperCase()))
+          ) {
+            resolve(val)
+            return
           }
-          cursorReq.onerror = () => resolve(null)
+          cursor.continue()
+        } else {
+          resolve(null)
         }
       }
-      req1.onerror = () => resolve(null)
+      cursorReq.onerror = () => resolve(null)
     })
-
-    return result
   } catch (err) {
     console.warn('Local student lookup error:', err)
     return null
   }
 }
 
-/**
- * Save an offline attendance record to the queue
- */
+/* ============================================================
+   2. CLASSES LOCAL CACHE
+   ============================================================ */
+
+export async function cacheClassesLocally(classes: CachedClass[]): Promise<void> {
+  try {
+    const db = await openDatabase()
+    const tx = db.transaction(STORE_CLASSES, 'readwrite')
+    const store = tx.objectStore(STORE_CLASSES)
+
+    for (const c of classes) {
+      if (c.id) store.put(c)
+    }
+
+    return new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+    })
+  } catch (err) {
+    console.warn('Failed to cache classes locally:', err)
+  }
+}
+
+export async function getLocalClasses(): Promise<CachedClass[]> {
+  try {
+    const db = await openDatabase()
+    const tx = db.transaction(STORE_CLASSES, 'readonly')
+    const store = tx.objectStore(STORE_CLASSES)
+
+    return new Promise((resolve) => {
+      const results: CachedClass[] = []
+      const req = store.openCursor()
+      req.onsuccess = () => {
+        const cursor = req.result
+        if (cursor) {
+          results.push(cursor.value)
+          cursor.continue()
+        } else {
+          resolve(results)
+        }
+      }
+      req.onerror = () => resolve([])
+    })
+  } catch {
+    return []
+  }
+}
+
+/* ============================================================
+   3. STATS & ATTENDANCE LOCAL CACHE
+   ============================================================ */
+
+export async function cacheStatsLocally(key: string, data: any): Promise<void> {
+  try {
+    const db = await openDatabase()
+    const tx = db.transaction(STORE_STATS, 'readwrite')
+    const store = tx.objectStore(STORE_STATS)
+    store.put({ key, data, updatedAt: Date.now() })
+  } catch (err) {
+    console.warn('Failed to cache stats locally:', err)
+  }
+}
+
+export async function getLocalStats(key: string): Promise<any | null> {
+  try {
+    const db = await openDatabase()
+    const tx = db.transaction(STORE_STATS, 'readonly')
+    const store = tx.objectStore(STORE_STATS)
+
+    return new Promise((resolve) => {
+      const req = store.get(key)
+      req.onsuccess = () => resolve(req.result ? req.result.data : null)
+      req.onerror = () => resolve(null)
+    })
+  } catch {
+    return null
+  }
+}
+
+/* ============================================================
+   4. SYNC QUEUE & BACKGROUND TASKS
+   ============================================================ */
+
 export async function saveOfflineAttendance(record: OfflineAttendanceRecord): Promise<void> {
   try {
     const db = await openDatabase()
@@ -181,9 +310,6 @@ export async function saveOfflineAttendance(record: OfflineAttendanceRecord): Pr
   }
 }
 
-/**
- * Get all unsynced attendance records from queue
- */
 export async function getUnsyncedAttendance(): Promise<OfflineAttendanceRecord[]> {
   try {
     const db = await openDatabase()
@@ -211,9 +337,6 @@ export async function getUnsyncedAttendance(): Promise<OfflineAttendanceRecord[]
   }
 }
 
-/**
- * Mark records as synced in local DB
- */
 export async function markAttendanceSynced(ids: string[]): Promise<void> {
   try {
     const db = await openDatabase()
