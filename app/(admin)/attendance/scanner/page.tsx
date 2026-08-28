@@ -666,7 +666,7 @@ export default function AttendanceScannerPage() {
         {/* RIGHT COLUMN: CLEAN ALWAYS-ON HIGH-TECH QR CAMERA         */}
         {/* ========================================================= */}
         <div className="lg:col-span-5 flex flex-col items-center justify-center">
-          <div className="w-full max-w-[420px] aspect-square relative rounded-3xl overflow-hidden border-4 border-slate-800 shadow-2xl bg-slate-950">
+          <div className="w-full max-w-[520px] aspect-square relative rounded-3xl overflow-hidden border-4 border-slate-800 shadow-2xl bg-slate-950">
             
             {/* Always-on smooth QrCamera — NEVER STOPPED / NEVER FROZEN */}
             <QrCamera
@@ -678,17 +678,17 @@ export default function AttendanceScannerPage() {
             {/* Viewfinder Target & Laser Animation */}
             {cameraOn && (
               <div className="absolute inset-0 pointer-events-none flex flex-col justify-center items-center">
-                <div className="w-60 h-60 border-2 border-blue-500/30 rounded-3xl relative">
+                <div className="w-72 h-72 sm:w-80 sm:h-80 border-2 border-blue-500/30 rounded-3xl relative">
                   {/* Glowing Laser Line */}
                   <div 
                     className="absolute inset-x-0 h-1 bg-gradient-to-r from-transparent via-blue-400 to-transparent shadow-[0_0_15px_#3b82f6]"
                     style={{ animation: 'bounce 2.2s infinite ease-in-out' }}
                   />
                   {/* 4 Neon Corners */}
-                  <div className="absolute -top-1.5 -left-1.5 w-7 h-7 border-t-4 border-l-4 border-blue-500 rounded-tl-2xl shadow-[0_0_10px_#3b82f6]" />
-                  <div className="absolute -top-1.5 -right-1.5 w-7 h-7 border-t-4 border-r-4 border-blue-500 rounded-tr-2xl shadow-[0_0_10px_#3b82f6]" />
-                  <div className="absolute -bottom-1.5 -left-1.5 w-7 h-7 border-b-4 border-l-4 border-blue-500 rounded-bl-2xl shadow-[0_0_10px_#3b82f6]" />
-                  <div className="absolute -bottom-1.5 -right-1.5 w-7 h-7 border-b-4 border-r-4 border-blue-500 rounded-br-2xl shadow-[0_0_10px_#3b82f6]" />
+                  <div className="absolute -top-1.5 -left-1.5 w-8 h-8 border-t-4 border-l-4 border-blue-500 rounded-tl-2xl shadow-[0_0_12px_#3b82f6]" />
+                  <div className="absolute -top-1.5 -right-1.5 w-8 h-8 border-t-4 border-r-4 border-blue-500 rounded-tr-2xl shadow-[0_0_12px_#3b82f6]" />
+                  <div className="absolute -bottom-1.5 -left-1.5 w-8 h-8 border-b-4 border-l-4 border-blue-500 rounded-bl-2xl shadow-[0_0_12px_#3b82f6]" />
+                  <div className="absolute -bottom-1.5 -right-1.5 w-8 h-8 border-b-4 border-r-4 border-blue-500 rounded-br-2xl shadow-[0_0_12px_#3b82f6]" />
                 </div>
               </div>
             )}
