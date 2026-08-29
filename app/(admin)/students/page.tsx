@@ -371,7 +371,7 @@ export default function StudentsPage() {
     window.open('/api/students/export', '_blank')
   }
 
-  // Import Submission
+  // Import Submission with instant local caching and immediate refresh
   const handleImportSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!importExcel) {
@@ -402,8 +402,14 @@ export default function StudentsPage() {
       }
 
       setImportSummary(result)
-      fetchStudents()
-      fetchClasses()
+      invalidateClientCache('/api/students')
+      invalidateClientCache('/api/classes')
+
+      // Fetch fresh data immediately
+      await fetchClasses()
+      await fetchStudents()
+
+      // Automatically trigger QR Zip download
       if (result.qr_students?.length) {
         downloadQrZip(result.qr_students)
       }
@@ -692,15 +698,42 @@ export default function StudentsPage() {
             {importSummary ? (
               /* Success Summary view */
               <div className="p-6 space-y-5">
-                <div className="text-center p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-100 dark:border-emerald-900/50">
-                  <CheckCircle className="w-10 h-10 text-emerald-600 dark:text-emerald-400 mx-auto mb-2" />
-                  <h3 className="font-bold text-slate-900 dark:text-white text-base">Import muvaffaqiyatli yakunlandi!</h3>
-                  <p className="text-xs text-slate-500 mt-1">
-                    Jami {importSummary.total} ta qatordan {importSummary.success} tasi saqlandi.
+                <div className="text-center p-5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-100 dark:border-emerald-900/50">
+                  <CheckCircle className="w-12 h-12 text-emerald-600 dark:text-emerald-400 mx-auto mb-2" />
+                  <h3 className="font-extrabold text-slate-900 dark:text-white text-lg">Import muvaffaqiyatli yakunlandi!</h3>
+                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+                    Jami <strong>{importSummary.total}</strong> ta o&apos;quvchidan <strong>{importSummary.success}</strong> tasi saqlandi va QR kodlari generatsiya qilindi.
                   </p>
+                  {importSummary.failed > 0 && (
+                    <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                      {importSummary.failed} ta qatorda xatolik bo&apos;ldi.
+                    </p>
+                  )}
                 </div>
 
-                <div className="flex justify-end pt-3">
+                {/* QR Zip action button */}
+                {importSummary.qr_students?.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => downloadQrZip(importSummary.qr_students)}
+                    disabled={qrZipLoading}
+                    className="w-full py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold transition-all flex items-center justify-center gap-2 text-sm shadow-lg shadow-blue-600/20 active:scale-95 cursor-pointer"
+                  >
+                    {qrZipLoading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>QR kodlar tayyorlanmoqda...</span>
+                      </>
+                    ) : (
+                      <>
+                        <ArrowDownToLine className="w-4 h-4" />
+                        <span>QR Kodlar arxivini yuklab olish (.zip)</span>
+                      </>
+                    )}
+                  </button>
+                )}
+
+                <div className="flex justify-end pt-3 border-t border-slate-100 dark:border-slate-800">
                   <button
                     onClick={() => {
                       setIsImportModalOpen(false)
@@ -710,7 +743,7 @@ export default function StudentsPage() {
                     }}
                     className="px-5 py-2.5 rounded-xl bg-slate-900 dark:bg-slate-800 hover:bg-slate-850 text-white text-sm font-semibold transition-colors cursor-pointer"
                   >
-                    Yopish
+                    Tayyor (Ro&apos;yxatni ko&apos;rish)
                   </button>
                 </div>
               </div>
