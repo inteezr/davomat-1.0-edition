@@ -10,18 +10,46 @@ function isPublicPath(pathname: string) {
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
-  // Skip API routes — they handle auth via verifyAdmin()
+  // 1. Skip API routes entirely (handled inside route handlers via verifyAdmin)
   if (pathname.startsWith('/api')) {
     return NextResponse.next({ request })
   }
 
   const isPublic = isPublicPath(pathname)
   const allCookies = request.cookies.getAll()
+  const hasAuthCookie = allCookies.some(
+    (c) => c.name.includes('sb-') || c.name.includes('supabase') || c.name.includes('auth-token')
+  )
 
-  // Fast path: if visiting a public route (landing, download, etc.) without any auth cookies, return immediately (0ms overhead)
-  const hasAuthCookie = allCookies.some((c) => c.name.includes('sb-') || c.name.includes('supabase') || c.name.includes('auth'))
+  // 2. Fast Path: Public routes without auth cookie (0ms)
   if (isPublic && !hasAuthCookie && pathname !== '/login') {
     return NextResponse.next({ request })
+  }
+
+  // 3. Ultra-Fast Client Navigation (RSC / Next Router Transitions)
+  // When navigating between pages inside the SPA, avoid making blocking remote network calls to Supabase.
+  const isRscOrPrefetch =
+    request.headers.get('rsc') === '1' ||
+    request.headers.get('next-router-prefetch') === '1' ||
+    request.headers.get('next-router-state-tree') !== null
+
+  if (isRscOrPrefetch && hasAuthCookie) {
+    // Instant 0ms passthrough for client-side navigation
+    return NextResponse.next({ request })
+  }
+
+  // 4. Full browser navigation: If no auth cookie on a protected route, redirect to /login immediately (0ms)
+  if (!hasAuthCookie && !isPublic) {
+    const url = request.nextUrl.clone()
+    url.pathname = '/login'
+    return NextResponse.redirect(url)
+  }
+
+  // 5. If on /login with valid auth cookie, redirect to /dashboard
+  if (hasAuthCookie && pathname === '/login') {
+    const url = request.nextUrl.clone()
+    url.pathname = '/dashboard'
+    return NextResponse.redirect(url)
   }
 
   let supabaseResponse = NextResponse.next({ request })
@@ -53,19 +81,17 @@ export async function proxy(request: NextRequest) {
     },
   )
 
-  // Refresh user session (must not add code between createServerClient and getUser)
+  // Refresh session in background / initial full page load
   const {
     data: { user },
   } = await supabase.auth.getUser()
 
-  // Redirect to login if accessing protected route without session
   if (!user && !isPublic) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     return NextResponse.redirect(url)
   }
 
-  // Redirect already logged-in user away from /login to /dashboard
   if (user && pathname === '/login') {
     const url = request.nextUrl.clone()
     url.pathname = '/dashboard'
@@ -78,11 +104,7 @@ export async function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     /*
-     * Match all request paths except:
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon)
-     * - static asset extensions
+     * Match all request paths except static files & images
      */
     '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|woff|woff2|ttf|otf)$).*)',
   ],

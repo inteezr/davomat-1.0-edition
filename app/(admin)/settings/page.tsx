@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useLanguage } from '@/lib/i18n/LanguageContext'
+import { fastFetch, invalidateClientCache } from '@/lib/client-cache'
 import { 
   School, 
   Clock, 
@@ -23,13 +24,12 @@ export default function SettingsPage() {
   const [saveLoading, setSaveLoading] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
-  // Fetch current settings
+  // Fetch current settings with fastFetch
   useEffect(() => {
     const fetchSettings = async () => {
       try {
-        const res = await fetch('/api/settings')
-        const data = await res.json()
-        if (res.ok && data) {
+        const data = await fastFetch('/api/settings')
+        if (data) {
           setFormData({
             school_name: data.school_name || 'Davomat 1.0 Maktabi',
             class_start_time: data.class_start_time || '08:30',

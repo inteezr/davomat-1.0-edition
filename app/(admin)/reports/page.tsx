@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 
 import { useLanguage } from '@/lib/i18n/LanguageContext'
+import { fastFetch, getSyncCachedData } from '@/lib/client-cache'
 
 interface ClassOption {
   id: string
@@ -37,8 +38,11 @@ interface LogItem {
 
 export default function ReportsPage() {
   const { t } = useLanguage()
-  const [classes, setClasses] = useState<ClassOption[]>([])
-  const [selectedClassId, setSelectedClassId] = useState('')
+  const cachedClasses = typeof window !== 'undefined' ? getSyncCachedData<{ data: ClassOption[] }>('/api/classes') : null
+  const initialClassList = cachedClasses?.data || []
+
+  const [classes, setClasses] = useState<ClassOption[]>(initialClassList)
+  const [selectedClassId, setSelectedClassId] = useState(() => initialClassList.length > 0 ? initialClassList[0].id : '')
   
   // Dates default range: last 7 days to today
   const getUzDateOffset = (offsetDays: number) => {
@@ -59,11 +63,10 @@ export default function ReportsPage() {
   useEffect(() => {
     const fetchClasses = async () => {
       try {
-        const res = await fetch('/api/classes')
-        const data = await res.json()
-        if (data.data && data.data.length > 0) {
+        const data = await fastFetch('/api/classes')
+        if (data?.data && data.data.length > 0) {
           setClasses(data.data)
-          setSelectedClassId(data.data[0].id)
+          if (!selectedClassId) setSelectedClassId(data.data[0].id)
         }
       } catch (err) {
         console.error('Sinflarni yuklashda xatolik:', err)

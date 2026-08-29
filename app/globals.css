@@ -165,3 +165,11 @@ nextjs-portal, next-route-announcer, [data-nextjs-dialog-overlay], #__next-route
 }
 .animate-orbit { animation: orbit 20s linear infinite; }
 .animate-wave { animation: wave 4s ease-in-out infinite; }
+
+/* Ultra-Fast 0ms UI and zero tap delay */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+button, a, select, input {
+  touch-action: manipulation;
+}
