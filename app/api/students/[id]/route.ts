@@ -1,10 +1,11 @@
 import { NextRequest } from 'next/server'
 import { verifyAdmin, handleApiError } from '@/lib/auth-helpers'
 import { createServiceClient } from '@/lib/supabase/server'
+import { clearStatsCache } from '@/lib/stats-cache'
 
 /**
  * PUT /api/students/[id]
- * Updates student information.
+ * Updates student information and clears global stats cache.
  */
 export async function PUT(
   request: NextRequest,
@@ -42,7 +43,7 @@ export async function PUT(
       return Response.json({ error: 'O\'quvchi topilmadi yoki sizda ruxsat yo\'q.' }, { status: 404 })
     }
 
-    const { error: updateError } = await serviceClient
+    const { data: updatedStudent, error: updateError } = await serviceClient
       .from('students')
       .update({
         first_name: first_name.trim(),
@@ -54,10 +55,18 @@ export async function PUT(
         updated_at: new Date().toISOString()
       })
       .eq('id', id)
+      .select()
+      .single()
 
     if (updateError) throw updateError
 
-    return Response.json({ message: 'O\'quvchi ma\'lumotlari yangilandi.' })
+    // Clear server stats cache so dashboard and classes reflect changes immediately
+    clearStatsCache()
+
+    return Response.json({ 
+      message: 'O\'quvchi ma\'lumotlari yangilandi.',
+      student: updatedStudent
+    })
   } catch (error) {
     return handleApiError(error)
   }
@@ -65,7 +74,8 @@ export async function PUT(
 
 /**
  * DELETE /api/students/[id]
- * Deletes a student and their associated Auth credentials.
+ * Cascade deletes a student, their attendance history, and Auth account,
+ * then purges all stats caches.
  */
 export async function DELETE(
   request: NextRequest,
@@ -88,7 +98,13 @@ export async function DELETE(
       return Response.json({ error: 'O\'quvchi topilmadi yoki sizda ruxsat yo\'q.' }, { status: 404 })
     }
 
-    // Delete student record
+    // 1. Cascade delete all attendance records for this student
+    await serviceClient
+      .from('attendance')
+      .delete()
+      .eq('student_id', id)
+
+    // 2. Delete student record from public.students
     const { error: deleteError } = await serviceClient
       .from('students')
       .delete()
@@ -96,12 +112,15 @@ export async function DELETE(
 
     if (deleteError) throw deleteError
 
-    // Delete Auth user if exists
+    // 3. Delete Auth user if exists
     if (student.auth_user_id) {
       await serviceClient.auth.admin.deleteUser(student.auth_user_id).catch(() => {})
     }
 
-    return Response.json({ message: 'O\'quvchi muvaffaqiyatli o\'chirildi.' })
+    // 4. Purge server-side stats cache immediately
+    clearStatsCache()
+
+    return Response.json({ message: 'O\'quvchi va unga tegishli barcha ma\'lumotlar muvaffaqiyatli o\'chirildi.' })
   } catch (error) {
     return handleApiError(error)
   }

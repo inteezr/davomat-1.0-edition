@@ -282,6 +282,8 @@ export default function StudentsPage() {
       
       if (res.ok && data.student) {
         invalidateClientCache('/api/students')
+        invalidateClientCache('/api/attendance')
+        invalidateClientCache('/api/classes')
         // Update temporary ID with real database ID
         setStudents(prev => prev.map(s => s.id === tempId ? { ...s, id: data.student.id } : s))
         cacheStudentsLocally([{ ...optimisticStudent, id: data.student.id }])
@@ -321,6 +323,9 @@ export default function StudentsPage() {
 
     // Save to local IndexedDB immediately
     cacheStudentsLocally([updatedStudent])
+    invalidateClientCache('/api/students')
+    invalidateClientCache('/api/attendance')
+    invalidateClientCache('/api/classes')
 
     // 2. BACKGROUND SERVER SYNC
     try {
@@ -331,6 +336,8 @@ export default function StudentsPage() {
       })
       if (res.ok) {
         invalidateClientCache('/api/students')
+        invalidateClientCache('/api/attendance')
+        invalidateClientCache('/api/classes')
       }
     } catch {
       // Saved locally
@@ -347,6 +354,9 @@ export default function StudentsPage() {
 
     // Delete from local IndexedDB immediately
     deleteStudentLocally(targetId)
+    invalidateClientCache('/api/students')
+    invalidateClientCache('/api/attendance')
+    invalidateClientCache('/api/classes')
 
     // 2. BACKGROUND SERVER SYNC
     try {
@@ -355,6 +365,8 @@ export default function StudentsPage() {
       })
       if (res.ok) {
         invalidateClientCache('/api/students')
+        invalidateClientCache('/api/attendance')
+        invalidateClientCache('/api/classes')
       }
     } catch {
       // Handled locally

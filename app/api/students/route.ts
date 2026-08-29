@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { verifyAdmin, handleApiError } from '@/lib/auth-helpers'
 import { createServiceClient } from '@/lib/supabase/server'
+import { clearStatsCache } from '@/lib/stats-cache'
 
 // Random 8-character alphanumeric password generator
 function generateRandomPassword() {
@@ -159,6 +160,9 @@ export async function POST(request: NextRequest) {
       createdAuthUserId = null
       throw studentError
     }
+
+    // Clear server stats cache so dashboard updates total counts immediately
+    clearStatsCache()
 
     return Response.json({
       message: 'O\'quvchi muvaffaqiyatli yaratildi.',
