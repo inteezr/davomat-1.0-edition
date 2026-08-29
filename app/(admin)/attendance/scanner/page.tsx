@@ -266,8 +266,8 @@ export default function AttendanceScannerPage() {
         first_name: localStudent.first_name,
         last_name: localStudent.last_name,
         student_code: localStudent.student_code,
-        photo_url: localStudent.photo_url,
-        class_name: localStudent.class_name,
+        photo_url: localStudent.photo_url || null,
+        class_name: localStudent.class_name || null,
         checked_in_at: nowIso,
         status: 'present',
         isOffline: !navigator.onLine
@@ -287,8 +287,8 @@ export default function AttendanceScannerPage() {
         student_code: localStudent.student_code,
         first_name: localStudent.first_name,
         last_name: localStudent.last_name,
-        class_name: localStudent.class_name,
-        photo_url: localStudent.photo_url,
+        class_name: localStudent.class_name || null,
+        photo_url: localStudent.photo_url || null,
         status: 'present' as const,
         checked_in_at: nowIso,
         synced: false

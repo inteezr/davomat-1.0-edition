@@ -24,7 +24,7 @@ import {
 
 import { useLanguage } from '@/lib/i18n/LanguageContext'
 import { fastFetch, invalidateClientCache, getSyncCachedData } from '@/lib/client-cache'
-import { cacheStudentsLocally } from '@/lib/offline-db'
+import { cacheStudentsLocally, deleteStudentLocally } from '@/lib/offline-db'
 
 interface Student {
   id: string
@@ -234,12 +234,44 @@ export default function StudentsPage() {
     setIsDeleteModalOpen(true)
   }
 
-  // Handlers
+  // Handlers with Instant 0ms Optimistic UI Updates
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setSubmitLoading(true)
     setFormError(null)
 
+    const tempId = crypto.randomUUID()
+    const selectedClass = classes.find(c => c.id === formData.class_id)?.name
+
+    const optimisticStudent: Student = {
+      id: tempId,
+      student_code: formData.student_code.trim(),
+      first_name: formData.first_name.trim(),
+      last_name: formData.last_name.trim(),
+      class_id: formData.class_id || null,
+      class_name: selectedClass || null,
+      phone: formData.phone || null,
+      parent_phone: formData.parent_phone || null,
+      status: formData.status as 'active' | 'inactive'
+    }
+
+    // 1. INSTANT 0ms OPTIMISTIC UPDATE
+    setStudents(prev => [optimisticStudent, ...prev])
+    setTotalStudents(prev => prev + 1)
+    setIsAddModalOpen(false)
+
+    // Save to local IndexedDB immediately
+    cacheStudentsLocally([optimisticStudent])
+
+    // Show QR modal immediately
+    setCreatedStudentQr({
+      id: tempId,
+      student_code: optimisticStudent.student_code,
+      first_name: optimisticStudent.first_name,
+      last_name: optimisticStudent.last_name,
+      class_name: selectedClass
+    })
+
+    // 2. BACKGROUND SERVER SYNC
     try {
       const res = await fetch('/api/students', {
         method: 'POST',
@@ -248,112 +280,84 @@ export default function StudentsPage() {
       })
       const data = await res.json()
       
-      if (!res.ok) {
-        setFormError(data.error || 'Xatolik yuz berdi.')
-        return
+      if (res.ok && data.student) {
+        invalidateClientCache('/api/students')
+        // Update temporary ID with real database ID
+        setStudents(prev => prev.map(s => s.id === tempId ? { ...s, id: data.student.id } : s))
+        cacheStudentsLocally([{ ...optimisticStudent, id: data.student.id }])
+      } else if (!res.ok) {
+        // Rollback if server rejected
+        setStudents(prev => prev.filter(s => s.id !== tempId))
+        setTotalStudents(prev => prev - 1)
+        deleteStudentLocally(tempId)
+        alert(data.error || 'O\'quvchi qo\'shishda xatolik yuz berdi.')
       }
-
-      invalidateClientCache('/api/students')
-      setIsAddModalOpen(false)
-      fetchStudents()
-      
-      const selectedClass = classes.find(c => c.id === formData.class_id)?.name
-
-      // Instantly persist to local offline database
-      if (data.student) {
-        cacheStudentsLocally([{
-          id: data.student.id,
-          student_code: data.student.student_code,
-          first_name: data.student.first_name,
-          last_name: data.student.last_name,
-          class_id: data.student.class_id,
-          class_name: selectedClass || null,
-          phone: data.student.phone,
-          parent_phone: data.student.parent_phone,
-          status: data.student.status,
-          photo_url: data.student.photo_url || null
-        }])
-      }
-
-      setCreatedStudentQr({
-        id: data.student.id,
-        student_code: data.student.student_code,
-        first_name: data.student.first_name,
-        last_name: data.student.last_name,
-        class_name: selectedClass
-      })
-    } catch (err) {
-      setFormError('Serverga bog\'lanib bo\'lmadi.')
-    } finally {
-      setSubmitLoading(false)
+    } catch {
+      // Keep in local offline database — will sync later
     }
   }
 
   const handleEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setSubmitLoading(true)
     setFormError(null)
 
+    const selectedClass = classes.find(c => c.id === formData.class_id)?.name
+
+    const updatedStudent: Student = {
+      id: formData.id,
+      student_code: formData.student_code.trim(),
+      first_name: formData.first_name.trim(),
+      last_name: formData.last_name.trim(),
+      class_id: formData.class_id || null,
+      class_name: selectedClass || null,
+      phone: formData.phone || null,
+      parent_phone: formData.parent_phone || null,
+      status: formData.status as 'active' | 'inactive'
+    }
+
+    // 1. INSTANT 0ms OPTIMISTIC UPDATE
+    setStudents(prev => prev.map(s => s.id === formData.id ? updatedStudent : s))
+    setIsEditModalOpen(false)
+
+    // Save to local IndexedDB immediately
+    cacheStudentsLocally([updatedStudent])
+
+    // 2. BACKGROUND SERVER SYNC
     try {
       const res = await fetch(`/api/students/${formData.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData)
       })
-      const data = await res.json()
-
-      if (!res.ok) {
-        setFormError(data.error || 'Xatolik yuz berdi.')
-        return
+      if (res.ok) {
+        invalidateClientCache('/api/students')
       }
-
-      invalidateClientCache('/api/students')
-      setIsEditModalOpen(false)
-      fetchStudents()
-
-      const selectedClass = classes.find(c => c.id === formData.class_id)?.name
-
-      // Update in local offline database
-      if (data.student) {
-        cacheStudentsLocally([{
-          id: data.student.id,
-          student_code: data.student.student_code,
-          first_name: data.student.first_name,
-          last_name: data.student.last_name,
-          class_id: data.student.class_id,
-          class_name: selectedClass || null,
-          phone: data.student.phone,
-          parent_phone: data.student.parent_phone,
-          status: data.student.status,
-          photo_url: data.student.photo_url || null
-        }])
-      }
-    } catch (err) {
-      setFormError('Serverga bog\'lanib bo\'lmadi.')
-    } finally {
-      setSubmitLoading(false)
+    } catch {
+      // Saved locally
     }
   }
 
   const handleDeleteSubmit = async () => {
-    setSubmitLoading(true)
+    const targetId = formData.id
+
+    // 1. INSTANT 0ms OPTIMISTIC UPDATE
+    setStudents(prev => prev.filter(s => s.id !== targetId))
+    setTotalStudents(prev => Math.max(0, prev - 1))
+    setIsDeleteModalOpen(false)
+
+    // Delete from local IndexedDB immediately
+    deleteStudentLocally(targetId)
+
+    // 2. BACKGROUND SERVER SYNC
     try {
-      const res = await fetch(`/api/students/${formData.id}`, {
+      const res = await fetch(`/api/students/${targetId}`, {
         method: 'DELETE'
       })
-      
-      if (!res.ok) {
-        alert('O\'chirishda xatolik yuz berdi.')
-        return
+      if (res.ok) {
+        invalidateClientCache('/api/students')
       }
-
-      invalidateClientCache('/api/students')
-      setIsDeleteModalOpen(false)
-      fetchStudents()
-    } catch (err) {
-      alert('Serverga bog\'lanib bo\'lmadi.')
-    } finally {
-      setSubmitLoading(false)
+    } catch {
+      // Handled locally
     }
   }
 

@@ -10,8 +10,8 @@ export interface CachedStudent {
   first_name: string
   last_name: string
   class_id?: string | null
-  class_name: string | null
-  photo_url: string | null
+  class_name?: string | null
+  photo_url?: string | null
   phone?: string | null
   parent_phone?: string | null
   status?: 'active' | 'inactive'
@@ -22,7 +22,7 @@ export interface CachedClass {
   id: string
   name: string
   grade?: number | null
-  student_count?: number
+  student_count?: number | string
 }
 
 export interface OfflineAttendanceRecord {
@@ -41,7 +41,7 @@ export interface OfflineAttendanceRecord {
 
 export interface OfflineMutationTask {
   id: string
-  type: 'attendance_scan' | 'attendance_manual' | 'attendance_excuse' | 'student_create' | 'student_update'
+  type: 'attendance_scan' | 'attendance_manual' | 'attendance_excuse' | 'student_create' | 'student_update' | 'student_delete'
   payload: any
   createdAt: number
   synced: boolean
@@ -100,7 +100,7 @@ function openDatabase(): Promise<IDBDatabase> {
 }
 
 /* ============================================================
-   1. STUDENTS LOCAL CACHE (0ms lookups)
+   1. STUDENTS LOCAL CACHE (0ms lookups & mutations)
    ============================================================ */
 
 export async function cacheStudentsLocally(students: CachedStudent[]): Promise<void> {
@@ -124,6 +124,17 @@ export async function cacheStudentsLocally(students: CachedStudent[]): Promise<v
     })
   } catch (err) {
     console.warn('Failed to cache students locally:', err)
+  }
+}
+
+export async function deleteStudentLocally(id: string): Promise<void> {
+  try {
+    const db = await openDatabase()
+    const tx = db.transaction(STORE_STUDENTS, 'readwrite')
+    const store = tx.objectStore(STORE_STUDENTS)
+    store.delete(id)
+  } catch (err) {
+    console.warn('Failed to delete student locally:', err)
   }
 }
 
@@ -212,7 +223,7 @@ export async function findStudentLocally(codeOrToken: string): Promise<CachedStu
 }
 
 /* ============================================================
-   2. CLASSES LOCAL CACHE
+   2. CLASSES LOCAL CACHE & MUTATIONS
    ============================================================ */
 
 export async function cacheClassesLocally(classes: CachedClass[]): Promise<void> {
@@ -231,6 +242,17 @@ export async function cacheClassesLocally(classes: CachedClass[]): Promise<void>
     })
   } catch (err) {
     console.warn('Failed to cache classes locally:', err)
+  }
+}
+
+export async function deleteClassLocally(id: string): Promise<void> {
+  try {
+    const db = await openDatabase()
+    const tx = db.transaction(STORE_CLASSES, 'readwrite')
+    const store = tx.objectStore(STORE_CLASSES)
+    store.delete(id)
+  } catch (err) {
+    console.warn('Failed to delete class locally:', err)
   }
 }
 

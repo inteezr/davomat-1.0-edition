@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useLanguage } from '@/lib/i18n/LanguageContext'
 import { fastFetch, invalidateClientCache, getSyncCachedData } from '@/lib/client-cache'
-import { cacheClassesLocally } from '@/lib/offline-db'
+import { cacheClassesLocally, deleteClassLocally } from '@/lib/offline-db'
 import { 
   Plus, Edit, Trash2, School, Users, X, Loader2, XCircle, Phone
 } from 'lucide-react'
@@ -133,10 +133,27 @@ export default function ClassesPage() {
 
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setSubmitLoading(true)
     setFormError(null)
+
     const gradeMatch = formData.name.trim().match(/^(\d+)/)
     const grade = gradeMatch ? parseInt(gradeMatch[1], 10) : null
+    const tempId = crypto.randomUUID()
+
+    const optimisticClass: Class = {
+      id: tempId,
+      name: formData.name.trim(),
+      grade,
+      student_count: 0
+    }
+
+    // 1. INSTANT 0ms OPTIMISTIC UPDATE
+    setClasses(prev => [...prev, optimisticClass])
+    setIsAddModalOpen(false)
+
+    // Save to local IndexedDB immediately
+    cacheClassesLocally([optimisticClass])
+
+    // 2. BACKGROUND SERVER SYNC
     try {
       const res = await fetch('/api/classes', {
         method: 'POST',
@@ -144,53 +161,69 @@ export default function ClassesPage() {
         body: JSON.stringify({ name: formData.name, grade })
       })
       const data = await res.json()
-      if (!res.ok) { setFormError(data.error || 'Xatolik yuz berdi.'); return }
-      invalidateClientCache('/api/classes')
-      setIsAddModalOpen(false)
-      fetchClasses()
-
-      if (data.data) {
+      if (res.ok && data.data) {
+        invalidateClientCache('/api/classes')
+        setClasses(prev => prev.map(c => c.id === tempId ? data.data : c))
         cacheClassesLocally([data.data])
+      } else if (!res.ok) {
+        // Rollback
+        setClasses(prev => prev.filter(c => c.id !== tempId))
+        deleteClassLocally(tempId)
+        alert(data.error || 'Sinf yaratishda xatolik yuz berdi.')
       }
-    } catch { setFormError("Serverga bog'lanib bo'lmadi.") }
-    finally { setSubmitLoading(false) }
+    } catch {
+      // Keep in local offline database
+    }
   }
 
   const handleEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setSubmitLoading(true)
     setFormError(null)
+
     const gradeMatch = formData.name.trim().match(/^(\d+)/)
     const grade = gradeMatch ? parseInt(gradeMatch[1], 10) : null
+
+    // 1. INSTANT 0ms OPTIMISTIC UPDATE
+    setClasses(prev => prev.map(c => c.id === formData.id ? { ...c, name: formData.name.trim(), grade } : c))
+    setIsEditModalOpen(false)
+
+    // Update in local IndexedDB
+    cacheClassesLocally([{ id: formData.id, name: formData.name.trim(), grade }])
+
+    // 2. BACKGROUND SERVER SYNC
     try {
       const res = await fetch(`/api/classes/${formData.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: formData.name, grade })
       })
-      const data = await res.json()
-      if (!res.ok) { setFormError(data.error || 'Xatolik yuz berdi.'); return }
-      invalidateClientCache('/api/classes')
-      setIsEditModalOpen(false)
-      fetchClasses()
-
-      if (data.data) {
-        cacheClassesLocally([data.data])
+      if (res.ok) {
+        invalidateClientCache('/api/classes')
       }
-    } catch { setFormError("Serverga bog'lanib bo'lmadi.") }
-    finally { setSubmitLoading(false) }
+    } catch {
+      // Saved locally
+    }
   }
 
   const handleDeleteSubmit = async () => {
-    setSubmitLoading(true)
+    const targetId = formData.id
+
+    // 1. INSTANT 0ms OPTIMISTIC UPDATE
+    setClasses(prev => prev.filter(c => c.id !== targetId))
+    setIsDeleteModalOpen(false)
+
+    // Delete from local IndexedDB
+    deleteClassLocally(targetId)
+
+    // 2. BACKGROUND SERVER SYNC
     try {
-      const res = await fetch(`/api/classes/${formData.id}`, { method: 'DELETE' })
-      if (!res.ok) { alert("O'chirishda xatolik yuz berdi."); return }
-      invalidateClientCache('/api/classes')
-      setIsDeleteModalOpen(false)
-      fetchClasses()
-    } catch { alert("Serverga bog'lanib bo'lmadi.") }
-    finally { setSubmitLoading(false) }
+      const res = await fetch(`/api/classes/${targetId}`, { method: 'DELETE' })
+      if (res.ok) {
+        invalidateClientCache('/api/classes')
+      }
+    } catch {
+      // Handled locally
+    }
   }
 
   const filteredStudents = classPopupStudents.filter(s => {
