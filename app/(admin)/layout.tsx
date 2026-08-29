@@ -35,10 +35,10 @@ function AdminLayoutContent({ children }: { children: React.ReactNode }) {
   const { language, setLanguage, t } = useLanguage()
   const [mounted, setMounted] = useState(false)
 
-  // Admin profile
-  const [adminEmail, setAdminEmail] = useState('')
-  const [adminName, setAdminName] = useState('')
-  const [schoolName, setSchoolName] = useState('')
+  // Admin profile with instant 0ms localStorage caching
+  const [adminEmail, setAdminEmail] = useState(() => typeof window !== 'undefined' ? localStorage.getItem('davomat_admin_email') || '' : '')
+  const [adminName, setAdminName] = useState(() => typeof window !== 'undefined' ? localStorage.getItem('davomat_admin_name') || '' : '')
+  const [schoolName, setSchoolName] = useState(() => typeof window !== 'undefined' ? localStorage.getItem('davomat_school_name') || '' : '')
 
   // Admin settings modal
   const [profileOpen, setProfileOpen] = useState(false)
@@ -50,12 +50,21 @@ function AdminLayoutContent({ children }: { children: React.ReactNode }) {
     document.documentElement.classList.remove('dark')
     setMounted(true)
 
-    // Load admin info + school name
+    // Prefetch all admin routes in background for instant 0ms transitions
+    const routes = ['/dashboard', '/students', '/classes', '/attendance/scanner', '/attendance/manual', '/reports', '/settings']
+    routes.forEach(r => router.prefetch(r))
+
+    // Background verify admin info + school name
     supabase.auth.getUser().then(async ({ data }) => {
       if (data?.user) {
-        setAdminEmail(data.user.email || '')
+        const email = data.user.email || ''
         const meta = data.user.user_metadata
-        setAdminName(meta?.full_name || meta?.name || data.user.email?.split('@')[0] || 'Admin')
+        const name = meta?.full_name || meta?.name || email.split('@')[0] || 'Admin'
+        
+        setAdminEmail(email)
+        setAdminName(name)
+        localStorage.setItem('davomat_admin_email', email)
+        localStorage.setItem('davomat_admin_name', name)
 
         // Fetch school name from admins -> schools table
         try {
@@ -67,14 +76,15 @@ function AdminLayoutContent({ children }: { children: React.ReactNode }) {
           
           if (adminRow) {
             const sName = (adminRow.schools as any)?.name
-            if (sName) setSchoolName(sName)
+            if (sName) {
+              setSchoolName(sName)
+              localStorage.setItem('davomat_school_name', sName)
+            }
           }
-        } catch {
-          // School name is optional — don't block UI
-        }
+        } catch {}
       }
     })
-  }, [])
+  }, [router])
 
   const handleLogout = async () => {
     await supabase.auth.signOut()

@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useLanguage } from '@/lib/i18n/LanguageContext'
-import { fastFetch, invalidateClientCache } from '@/lib/client-cache'
+import { fastFetch, invalidateClientCache, getSyncCachedData } from '@/lib/client-cache'
 import { 
   Users, 
   CheckCircle, 
@@ -44,9 +44,10 @@ interface RecentLog {
 
 export default function DashboardPage() {
   const { t, language } = useLanguage()
-  const [stats, setStats] = useState<StatsData | null>(null)
+  const initialCached = typeof window !== 'undefined' ? getSyncCachedData<StatsData>('/api/attendance/stats') : null
+  const [stats, setStats] = useState<StatsData | null>(initialCached)
   const [recentLogs, setRecentLogs] = useState<RecentLog[]>([])
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(() => !initialCached)
   const mountedRef = useRef(false)
 
   useEffect(() => { mountedRef.current = true }, [])

@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useLanguage } from '@/lib/i18n/LanguageContext'
-import { fastFetch, invalidateClientCache } from '@/lib/client-cache'
+import { fastFetch, invalidateClientCache, getSyncCachedData } from '@/lib/client-cache'
 import { cacheClassesLocally } from '@/lib/offline-db'
 import { 
   Plus, Edit, Trash2, School, Users, X, Loader2, XCircle, Phone
@@ -54,8 +54,9 @@ function FullOverlay({ onClose, children }: { onClose: () => void; children: Rea
 
 export default function ClassesPage() {
   const { t } = useLanguage()
-  const [classes, setClasses] = useState<Class[]>([])
-  const [loading, setLoading] = useState(true)
+  const cached = typeof window !== 'undefined' ? getSyncCachedData<{ data: Class[] }>('/api/classes') : null
+  const [classes, setClasses] = useState<Class[]>(() => cached?.data || [])
+  const [loading, setLoading] = useState(() => !cached)
   const [mounted, setMounted] = useState(false)
 
   // Modals

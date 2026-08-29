@@ -23,7 +23,7 @@ import {
 } from 'lucide-react'
 
 import { useLanguage } from '@/lib/i18n/LanguageContext'
-import { fastFetch, invalidateClientCache } from '@/lib/client-cache'
+import { fastFetch, invalidateClientCache, getSyncCachedData } from '@/lib/client-cache'
 import { cacheStudentsLocally } from '@/lib/offline-db'
 
 interface Student {
@@ -63,18 +63,23 @@ interface CreatedStudentQr {
 
 export default function StudentsPage() {
   const { t } = useLanguage()
+  
+  // Instant 0ms cached initial states
+  const cachedStudents = typeof window !== 'undefined' ? getSyncCachedData<{ data: Student[], total?: number, totalPages?: number }>('/api/students') : null
+  const cachedClasses = typeof window !== 'undefined' ? getSyncCachedData<{ data: ClassOption[] }>('/api/classes') : null
+
   // Lists & data
-  const [students, setStudents] = useState<Student[]>([])
-  const [classes, setClasses] = useState<ClassOption[]>([])
-  const [loading, setLoading] = useState(true)
+  const [students, setStudents] = useState<Student[]>(() => cachedStudents?.data || [])
+  const [classes, setClasses] = useState<ClassOption[]>(() => cachedClasses?.data || [])
+  const [loading, setLoading] = useState(() => !cachedStudents)
 
   // Filters & pagination
   const [search, setSearch] = useState('')
   const [classFilter, setClassFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [page, setPage] = useState(1)
-  const [totalPages, setTotalPages] = useState(1)
-  const [totalStudents, setTotalStudents] = useState(0)
+  const [totalPages, setTotalPages] = useState(() => cachedStudents?.totalPages || 1)
+  const [totalStudents, setTotalStudents] = useState(() => cachedStudents?.total || 0)
 
   // Modals state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false)

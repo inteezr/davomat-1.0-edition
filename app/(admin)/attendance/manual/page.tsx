@@ -13,7 +13,7 @@ import {
   Loader2,
   FileSpreadsheet
 } from 'lucide-react'
-import { fastFetch, invalidateClientCache } from '@/lib/client-cache'
+import { fastFetch, invalidateClientCache, getSyncCachedData } from '@/lib/client-cache'
 
 interface Student {
   id: string
@@ -33,8 +33,11 @@ interface AttendanceState {
 }
 
 export default function ManualAttendancePage() {
-  const [classes, setClasses] = useState<ClassOption[]>([])
-  const [selectedClassId, setSelectedClassId] = useState('')
+  const cachedClasses = typeof window !== 'undefined' ? getSyncCachedData<{ data: ClassOption[] }>('/api/classes') : null
+  const initialClassList = cachedClasses?.data || []
+  
+  const [classes, setClasses] = useState<ClassOption[]>(initialClassList)
+  const [selectedClassId, setSelectedClassId] = useState(() => initialClassList.length > 0 ? initialClassList[0].id : '')
   
   // Default date to today's local date (Uzbekistan UTC+5)
   const getTodayUzDate = () => {
