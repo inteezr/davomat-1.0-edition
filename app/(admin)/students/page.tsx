@@ -24,6 +24,7 @@ import {
 
 import { useLanguage } from '@/lib/i18n/LanguageContext'
 import { fastFetch, invalidateClientCache } from '@/lib/client-cache'
+import { cacheStudentsLocally } from '@/lib/offline-db'
 
 interface Student {
   id: string
@@ -252,6 +253,23 @@ export default function StudentsPage() {
       fetchStudents()
       
       const selectedClass = classes.find(c => c.id === formData.class_id)?.name
+
+      // Instantly persist to local offline database
+      if (data.student) {
+        cacheStudentsLocally([{
+          id: data.student.id,
+          student_code: data.student.student_code,
+          first_name: data.student.first_name,
+          last_name: data.student.last_name,
+          class_id: data.student.class_id,
+          class_name: selectedClass || null,
+          phone: data.student.phone,
+          parent_phone: data.student.parent_phone,
+          status: data.student.status,
+          photo_url: data.student.photo_url || null
+        }])
+      }
+
       setCreatedStudentQr({
         id: data.student.id,
         student_code: data.student.student_code,
@@ -287,6 +305,24 @@ export default function StudentsPage() {
       invalidateClientCache('/api/students')
       setIsEditModalOpen(false)
       fetchStudents()
+
+      const selectedClass = classes.find(c => c.id === formData.class_id)?.name
+
+      // Update in local offline database
+      if (data.student) {
+        cacheStudentsLocally([{
+          id: data.student.id,
+          student_code: data.student.student_code,
+          first_name: data.student.first_name,
+          last_name: data.student.last_name,
+          class_id: data.student.class_id,
+          class_name: selectedClass || null,
+          phone: data.student.phone,
+          parent_phone: data.student.parent_phone,
+          status: data.student.status,
+          photo_url: data.student.photo_url || null
+        }])
+      }
     } catch (err) {
       setFormError('Serverga bog\'lanib bo\'lmadi.')
     } finally {

@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useLanguage } from '@/lib/i18n/LanguageContext'
 import { fastFetch, invalidateClientCache } from '@/lib/client-cache'
+import { cacheClassesLocally } from '@/lib/offline-db'
 import { 
   Plus, Edit, Trash2, School, Users, X, Loader2, XCircle, Phone
 } from 'lucide-react'
@@ -146,6 +147,10 @@ export default function ClassesPage() {
       invalidateClientCache('/api/classes')
       setIsAddModalOpen(false)
       fetchClasses()
+
+      if (data.data) {
+        cacheClassesLocally([data.data])
+      }
     } catch { setFormError("Serverga bog'lanib bo'lmadi.") }
     finally { setSubmitLoading(false) }
   }
@@ -167,6 +172,10 @@ export default function ClassesPage() {
       invalidateClientCache('/api/classes')
       setIsEditModalOpen(false)
       fetchClasses()
+
+      if (data.data) {
+        cacheClassesLocally([data.data])
+      }
     } catch { setFormError("Serverga bog'lanib bo'lmadi.") }
     finally { setSubmitLoading(false) }
   }
